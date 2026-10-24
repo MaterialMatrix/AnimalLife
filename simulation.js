@@ -1,6 +1,6 @@
 export const SAVE_KEY = 'animallife-clearing-v1';
 export const clamp = (n,lo=0,hi=100)=>Math.max(lo,Math.min(hi,n));
-export function newState(){return {version:1,x:0,z:8,health:100,food:78,water:80,energy:90,minutes:480,elapsed:0,resting:false,sheltered:false,goals:[false,false,false,false],won:false};}
+export function newState(world={lat:43.2,lon:-89.4,name:'North American woodland'}){return {version:1,world:{...world},x:0,z:8,health:100,food:78,water:80,energy:90,minutes:480,elapsed:0,resting:false,sheltered:false,goals:[false,false,false,false],won:false};}
 export function tick(s,seconds,moving=false,sprinting=false){
   s.elapsed+=seconds;s.minutes+=seconds*3;
   const protectedRest=s.resting||s.sheltered;
@@ -15,7 +15,9 @@ export function tick(s,seconds,moving=false,sprinting=false){
 export function parseSave(raw){
   try{const s=JSON.parse(raw);if(s?.version!==1)return null;
     for(const k of ['x','z','health','food','water','energy','minutes','elapsed'])if(!Number.isFinite(s[k]))return null;
-    if(Math.abs(s.x)>47||Math.abs(s.z)>47||s.elapsed<0||s.minutes<0)return null;
+    if(s.world!==undefined){if(!Number.isFinite(s.world?.lat)||Math.abs(s.world.lat)>90||!Number.isFinite(s.world.lon)||Math.abs(s.world.lon)>180||typeof s.world.name!=='string'||s.world.name.length>100)return null;}
+    const bound=s.world?40050:47;
+    if(Math.abs(s.x)>bound||Math.abs(s.z)>bound||s.elapsed<0||s.minutes<0)return null;
     for(const k of ['health','food','water','energy'])if(s[k]<0||s[k]>100)return null;
     if(!Array.isArray(s.goals)||s.goals.length!==4||s.goals.some(v=>typeof v!=='boolean'))return null;
     if(['resting','sheltered','won'].some(k=>typeof s[k]!=='boolean'))return null;

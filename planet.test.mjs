@@ -1,0 +1,10 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {PLANET_RADIUS,PLANET_CIRCUMFERENCE,localToGeo,geoVector,vectorGeo,isLand,biomeAt,tileKeys,tileRandom,sampleTerrain,HABITATS} from './planet.js';
+test('planet scale is 1:1000 Earth, roughly forty kilometres around',()=>assert.ok(PLANET_CIRCUMFERENCE>40000&&PLANET_CIRCUMFERENCE<40100));
+test('geodesic coordinates wrap across the date line',()=>{const g=localToGeo(PLANET_RADIUS*Math.PI/2,0,{lat:0,lon:170});assert.ok(Math.abs(g.lon+100)<1e-8);assert.ok(Math.abs(g.lat)<1e-8);});
+test('globe coordinates round trip across hemispheres',()=>{for(const p of HABITATS){const g=vectorGeo(geoVector(p.lat,p.lon));assert.ok(Math.abs(g.lat-p.lat)<1e-8);assert.ok(Math.abs(g.lon-p.lon)<1e-8);}});
+test('real coastlines distinguish land, oceans, and preset habitats',()=>{for(const p of HABITATS)assert.equal(isLand(p.lat,p.lon),true,p.name);assert.equal(isLand(0,-140),false);assert.equal(isLand(0,-30),false);assert.equal(isLand(23,13),true);});
+test('terrain generation is repeatable and starter ground remains flat',()=>{assert.equal(sampleTerrain(0,8).height,0);assert.deepEqual(sampleTerrain(192,80),sampleTerrain(192,80));assert.equal(biomeAt(23,13).id,'desert');});
+test('streaming covers negative coordinates and remains bounded after travel',()=>{assert.equal(tileKeys(-1,-1).length,25);assert.ok(tileKeys(-1,-1).includes('-1,-1'));assert.equal(tileKeys(20000,-14000).length,25);assert.equal(tileKeys(0,0,1).length,9);});
+test('tiles regenerate the same objects independently of load order',()=>{const a=tileRandom(4,-3),b=tileRandom(4,-3),c=tileRandom(-3,4);const first=Array.from({length:12},()=>a());assert.deepEqual(first,Array.from({length:12},()=>b()));assert.notDeepEqual(first,Array.from({length:12},()=>c()));});

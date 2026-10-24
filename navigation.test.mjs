@@ -28,3 +28,7 @@ test('turning takes the short path across the angle wrap',()=>{
   const value=turnToward(Math.PI-.1,-Math.PI+.1,.5);
   assert.ok(Math.abs(value-Math.PI)<1e-9);
 });
+test('planet terrain rules replace the old clearing boundary while keeping coasts blocked',()=>{
+  const free=walk(45,100,30,0,[],()=>true);assert.ok(free.x>74);
+  const coast=walk(90,100,30,0,[],x=>x<100);assert.ok(coast.x<100&&coast.x>99);
+});
