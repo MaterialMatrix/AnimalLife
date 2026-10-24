@@ -1,10 +1,16 @@
 import * as THREE from './three.module.js';
 import {newState,tick,parseSave,clamp,SAVE_KEY} from './simulation.js';
+import {cameraDirection,walk,turnToward} from './navigation.js';
 const $=id=>document.getElementById(id);
-let state=newState(),saved=null,started=false,paused=false,speed=1,zoom=24,last=0,saveTimer=0,hop=0;
+const DEFAULT_YAW=Math.atan2(.52,1);
+let state=newState(),saved=null,started=false,paused=false,speed=1,zoom=22,yaw=DEFAULT_YAW,pitch=.66,last=0,saveTimer=0,hop=0;
+let velocity={x:0,z:0},mousePosition=null,quality='standard',pinchDistance=null;
+const touches=new Map();
+const dialogs=()=>$('guide').open||$('mapDialog').open||$('ending').open;
+const blocked=()=>paused||document.hidden||!document.hasFocus()||dialogs();
 try{saved=parseSave(localStorage.getItem(SAVE_KEY));}catch{}
 if(saved)$('continue').hidden=false;
-const keys=new Set(), trees=[], patches=[], animals=[];
+const keys=new Set(), trees=[], patches=[];
 let renderer;
 try{renderer=new THREE.WebGLRenderer({canvas:$('world'),antialias:true,powerPreference:'low-power'});}catch(e){$('loading').hidden=true;$('error').hidden=false;$('error').textContent='This clearing needs WebGL. Please enable browser graphics acceleration or try a recent Chrome, Edge, Firefox, or Safari.';throw e;}
 renderer.setPixelRatio(Math.min(devicePixelRatio,1.6));renderer.shadowMap.enabled=true;renderer.shadowMap.type=THREE.PCFSoftShadowMap;renderer.setClearColor(0xb4c2a2);renderer.outputColorSpace=THREE.SRGBColorSpace;renderer.toneMapping=THREE.ACESFilmicToneMapping;
@@ -24,7 +30,7 @@ for(let i=0;i<130;i++){
  const h=4+rand()*5;const t=new THREE.Group();t.position.set(x,0,z);scene.add(t);
  mesh(new THREE.CylinderGeometry(.16,.35,h,7),trunk,0,h/2,0,t);
  for(let j=0;j<4;j++)ellipsoid(t,leafMats[i%4],(rand()-.5)*2,h-1+rand()*2,(rand()-.5)*2,2+rand(),1.8+rand(),2+rand());
- trees.push({x,z,r:.7});
+ trees.push({x,z,r:.7,group:t});
 }
 const stone=mat(0x939480);
 for(let i=0;i<55;i++){const x=(rand()-.5)*95,z=(rand()-.5)*95;if(Math.hypot(x,z)<12)continue;const r=.3+rand()*.7;const m=mesh(new THREE.DodecahedronGeometry(r,0),stone,x,r*.45,z);m.scale.y=.65;m.rotation.set(rand(),rand(),rand());}
@@ -55,42 +61,97 @@ const player=rabbit();scene.add(player);
 const fox=new THREE.Group(),orange=mat(0xad673d);ellipsoid(fox,orange,0,.55,0,.34,.43,.8);ellipsoid(fox,orange,0,.94,-.72,.3,.29,.38);ellipsoid(fox,cream,0,.8,-1,.19,.15,.28);for(const side of[-1,1]){mesh(new THREE.ConeGeometry(.16,.4,4),orange,side*.2,1.23,-.65,fox);ellipsoid(fox,black,side*.24,.98,-.93,.04,.04,.04);for(const z of[-.48,.5])ellipsoid(fox,black,side*.22,.22,z,.1,.3,.13);}const tail=ellipsoid(fox,orange,0,.65,1,.25,.25,.65);tail.rotation.x=-.4;ellipsoid(fox,cream,0,.88,1.5,.2,.2,.25);scene.add(fox);fox.position.set(24,0,-18);
 const butterflies=[];for(let i=0;i<10;i++){const g=new THREE.Group(),m=mat(i%2?0xe7c47d:0xe5e1cc);for(const s of[-1,1])ellipsoid(g,m,s*.13,0,0,.17,.025,.12);scene.add(g);butterflies.push(g);}
 const stats=[['health','Health','#d6dfae'],['food','Food','#b6cc80'],['water','Water','#8bc3c3'],['energy','Energy','#dfc185']];
+const landmarks=[{name:'Clover',x:-3,z:3,y:.7},{name:'Pond',x:10,z:-5,y:.4},{name:'Burrow',x:-10,z:4,y:1.7}];
+for(const point of landmarks){point.el=document.createElement('span');point.el.className='landmark';point.el.textContent=point.name;$('landmarks').append(point.el);}
+const mapContext=$('map').getContext('2d');
+function drawMap(){
+ const ctx=mapContext,size=640,scale=6,origin=size/2;
+ const at=(x,z)=>[origin+x*scale,origin+z*scale];
+ ctx.fillStyle='#243e32';ctx.fillRect(0,0,size,size);
+ ctx.strokeStyle='#e5ebc412';ctx.lineWidth=1;
+ for(let n=-40;n<=40;n+=10){const p=origin+n*scale;ctx.beginPath();ctx.moveTo(p,44);ctx.lineTo(p,size-44);ctx.moveTo(44,p);ctx.lineTo(size-44,p);ctx.stroke();}
+ ctx.strokeStyle='#b5c69555';ctx.strokeRect(origin-46*scale,origin-46*scale,92*scale,92*scale);
+ for(const tree of trees){const[x,z]=at(tree.x,tree.z);ctx.fillStyle='#8caa603a';ctx.beginPath();ctx.arc(x,z,9,0,Math.PI*2);ctx.fill();}
+ const[px,pz]=at(10,-5);ctx.fillStyle='#85b9b0';ctx.beginPath();ctx.ellipse(px,pz,4.8*1.4*scale,4.8*scale,0,0,Math.PI*2);ctx.fill();
+ for(const p of patches){const[x,z]=at(p.x,p.z);ctx.fillStyle=p.remaining>1?'#c7df8e':'#6d7956';ctx.beginPath();ctx.arc(x,z,7,0,Math.PI*2);ctx.fill();}
+ const[bx,bz]=at(-10,4);ctx.fillStyle='#e7c38c';ctx.fillRect(bx-8,bz-6,16,12);
+ const[fx,fz]=at(fox.position.x,fox.position.z);ctx.fillStyle='#e89964';ctx.beginPath();ctx.moveTo(fx,fz-9);ctx.lineTo(fx+7,fz);ctx.lineTo(fx,fz+9);ctx.lineTo(fx-7,fz);ctx.closePath();ctx.fill();
+ const[x,z]=at(state.x,state.z);ctx.strokeStyle='#f2f5d9';ctx.lineWidth=2;ctx.beginPath();ctx.arc(x,z,14,0,Math.PI*2);ctx.stroke();ctx.fillStyle='#f2f5d9';ctx.beginPath();ctx.arc(x,z,6,0,Math.PI*2);ctx.fill();
+ // Camera direction shows which way the top of your game view points.
+ ctx.beginPath();ctx.moveTo(x-Math.sin(yaw)*20,z-Math.cos(yaw)*20);ctx.lineTo(x-Math.sin(yaw-.28)*32,z-Math.cos(yaw-.28)*32);ctx.lineTo(x-Math.sin(yaw+.28)*32,z-Math.cos(yaw+.28)*32);ctx.closePath();ctx.fill();
+ ctx.font='600 20px sans-serif';ctx.textAlign='center';ctx.fillStyle='#dde7c7';ctx.fillText('N ↑',origin,28);
+ ctx.font='16px sans-serif';ctx.fillText('POND',px,pz-40);ctx.fillText('BURROW',bx,bz+30);
+ $('mapLocation').textContent=`You are ${Math.round(Math.hypot(state.x+10,state.z-4))} m from your burrow. The map faces north; the white arrow shows your camera direction.`;
+}
+function showMap(){if(!started||$('ending').open)return;keys.clear();velocity={x:0,z:0};drawMap();$('mapDialog').showModal();}
+$('mapButton').onclick=showMap;$('closeMap').onclick=()=>$('mapDialog').close();
+function setQuality(value){quality=value==='low'?'low':'standard';$('quality').value=quality;renderer.setPixelRatio(Math.min(devicePixelRatio,quality==='low'?1:1.6));renderer.shadowMap.enabled=quality!=='low';sun.castShadow=quality!=='low';scene.traverse(object=>{if(object.material){for(const material of Array.isArray(object.material)?object.material:[object.material])material.needsUpdate=true;}});resize();try{localStorage.setItem('animallife-graphics',quality);}catch{}}
+$('quality').onchange=()=>setQuality($('quality').value);
+$('feedback').href='https://github.com/MaterialMatrix/AnimalLife/issues/new?'+new URLSearchParams({title:'[Field test 0.2] ',body:'Game version: 0.2\nBrowser and device:\n\nWhat I did:\n1. \n\nWhat I expected:\n\nWhat happened:\n\nIdea or suggestion:\n'});
 $('stats').innerHTML=stats.map(([id,label,color])=>`<div class="stat"><label for="${id}">${label}<span id="${id}Value"></span></label><progress id="${id}" max="100" value="100" style="--bar:${color}"></progress></div>`).join('');
 function save(){if(!started||state.health<=0)return;try{localStorage.setItem(SAVE_KEY,JSON.stringify(state));$('saveStatus').textContent='Saved on this device.';}catch{$('saveStatus').textContent='Saving unavailable in this browser.';}}
-function begin(resume){state=resume&&saved?structuredClone(saved):newState();started=true;paused=false;$('intro').hidden=true;$('hud').hidden=false;$('ending').close();player.position.set(state.x,0,state.z);fox.position.set(24,0,-18);save();$('world').focus();updateHud();}
+function begin(resume){state=resume&&saved?structuredClone(saved):newState();started=true;paused=false;speed=1;resetCamera();velocity={x:0,z:0};keys.clear();for(const p of patches){p.remaining=100;p.group.scale.setScalar(1);}$('intro').hidden=true;$('hud').hidden=false;$('mapButton').hidden=false;$('ending').close();player.position.set(state.x,0,state.z);fox.position.set(24,0,-18);$('pause').textContent='Ⅱ';$('pause').setAttribute('aria-label','Pause game');document.querySelectorAll('[data-speed]').forEach(el=>el.classList.toggle('selected',el.dataset.speed==='1'));save();$('world').focus();updateHud();}
 $('start').onclick=()=>begin(false);$('continue').onclick=()=>begin(true);
-function pause(){if(!started)return;paused=!paused;keys.clear();$('pause').textContent=paused?'▶':'Ⅱ';$('pause').setAttribute('aria-label',paused?'Resume game':'Pause game');}
+function pause(){if(!started)return;paused=!paused;keys.clear();velocity={x:0,z:0};$('pause').textContent=paused?'▶':'Ⅱ';$('pause').setAttribute('aria-label',paused?'Resume game':'Pause game');updateHud();}
 $('pause').onclick=pause;
 for(const b of document.querySelectorAll('[data-speed]'))b.onclick=()=>{speed=Number(b.dataset.speed);document.querySelectorAll('[data-speed]').forEach(el=>el.classList.toggle('selected',el===b));};
-function rest(){if(!started||paused||state.health<=0)return;state.resting=!state.resting;if(!state.resting)state.sheltered=false;}
+function rest(){if(!started||blocked()||state.health<=0)return;state.resting=!state.resting;velocity={x:0,z:0};if(!state.resting)state.sheltered=false;updateHud();}
 $('rest').onclick=rest;
 function nearby(){if(Math.hypot(state.x+10,state.z-4)<3)return{type:'burrow'};if(Math.hypot((state.x-10)/1.4,state.z+5)<6)return{type:'water'};const p=patches.find(p=>p.remaining>0&&Math.hypot(state.x-p.x,state.z-p.z)<2.8);return p?{type:'food',patch:p}:null;}
-function interact(){if(!started||paused||state.health<=0)return;const target=nearby();if(!target)return;
+function interact(){if(!started||blocked()||state.health<=0)return;const target=nearby();if(!target)return;
  if(target.type==='food'){const amount=Math.min(25,target.patch.remaining,100-state.food);state.food=clamp(state.food+amount);target.patch.remaining-=amount;state.goals[0]=true;target.patch.group.scale.setScalar(.5+target.patch.remaining/200);}
  if(target.type==='water'){state.water=clamp(state.water+35);state.goals[1]=true;}
  if(target.type==='burrow'){state.sheltered=!state.sheltered;state.resting=state.sheltered;state.goals[2]=true;}
  updateHud();save();
 }
 $('interact').onclick=interact;
-$('helpButton').onclick=()=>{keys.clear();$('guide').showModal();};$('closeGuide').onclick=()=>$('guide').close();
+$('helpButton').onclick=()=>{keys.clear();velocity={x:0,z:0};$('guide').showModal();};$('closeGuide').onclick=()=>$('guide').close();
 $('newLife').onclick=()=>{$('guide').close();begin(false);};$('restart').onclick=()=>begin(false);
 $('keepPlaying').onclick=()=>$('ending').close();
-window.addEventListener('keydown',e=>{if($('guide').open||$('ending').open)return;const k=e.key.toLowerCase();if(['arrowup','arrowdown','arrowleft','arrowright',' '].includes(k))e.preventDefault();keys.add(k);if(e.repeat)return;if(k==='e')interact();if(k==='r')rest();if(k==='escape')pause();});
-window.addEventListener('keyup',e=>keys.delete(e.key.toLowerCase()));window.addEventListener('blur',()=>{keys.clear();save();});document.addEventListener('visibilitychange',()=>{keys.clear();save();last=0;});window.addEventListener('pagehide',save);
+window.addEventListener('keydown',e=>{if(dialogs())return;const k=e.key.toLowerCase();if(['arrowup','arrowdown','arrowleft','arrowright',' '].includes(k))e.preventDefault();keys.add(k);if(e.repeat)return;if(k==='e')interact();if(k==='r')rest();if(k==='m')showMap();if(k==='c')resetCamera();if(k==='escape')pause();});
+function clearMovement(){keys.clear();velocity={x:0,z:0};mousePosition=null;touches.clear();pinchDistance=null;}
+window.addEventListener('keyup',e=>keys.delete(e.key.toLowerCase()));window.addEventListener('blur',()=>{clearMovement();save();});document.addEventListener('visibilitychange',()=>{clearMovement();save();last=0;});window.addEventListener('pagehide',save);
+for(const dialog of document.querySelectorAll('dialog'))dialog.addEventListener('close',()=>{clearMovement();$('world').focus();});
 for(const b of document.querySelectorAll('[data-key]')){b.onpointerdown=e=>{e.preventDefault();b.setPointerCapture(e.pointerId);keys.add(b.dataset.key);};b.onpointerup=b.onpointercancel=b.onlostpointercapture=()=>keys.delete(b.dataset.key);}
 $('world').addEventListener('wheel',e=>{e.preventDefault();zoom=clamp(zoom+e.deltaY*.015,15,40);},{passive:false});
+function resetCamera(){yaw=DEFAULT_YAW;pitch=.66;zoom=22;mousePosition=null;}
+function look(dx,dy){yaw-=dx*.005;pitch=clamp(pitch+dy*.003,.3,1.15);}
+function touchDistance(){const points=[...touches.values()];return points.length===2?Math.hypot(points[0].x-points[1].x,points[0].y-points[1].y):null;}
+$('world').addEventListener('pointerdown',e=>{if(!started||blocked()||e.pointerType==='mouse')return;touches.set(e.pointerId,{x:e.clientX,y:e.clientY});pinchDistance=touchDistance();$('world').setPointerCapture(e.pointerId);});
+$('world').addEventListener('pointermove',e=>{
+ if(!started||blocked()){mousePosition=null;return;}
+ const next={x:e.clientX,y:e.clientY};
+ if(e.pointerType==='mouse'){
+  if(mousePosition)look(next.x-mousePosition.x,next.y-mousePosition.y);
+  mousePosition=next;return;
+ }
+ const previous=touches.get(e.pointerId);if(!previous)return;
+ touches.set(e.pointerId,next);
+ if(touches.size===1)look(next.x-previous.x,next.y-previous.y);
+ else{const distance=touchDistance();if(distance!==null&&pinchDistance!==null)zoom=clamp(zoom-(distance-pinchDistance)*.07,15,40);pinchDistance=distance;}
+});
+$('world').addEventListener('pointerleave',()=>mousePosition=null);
+for(const event of ['pointerup','pointercancel','lostpointercapture'])$('world').addEventListener(event,e=>{touches.delete(e.pointerId);pinchDistance=touchDistance();});
 function updateHud(){for(const[id]of stats){$(id).value=state[id];$(id+'Value').textContent=Math.round(state[id])+'%';}const total=Math.floor(state.minutes);$('age').textContent=`Day ${Math.floor(total/1440)+1} · ${String(Math.floor(total/60)%24).padStart(2,'0')}:${String(total%60).padStart(2,'0')}`;$('stage').textContent=state.elapsed>240?'Young adult':'Juvenile';$('status').textContent=paused?'Paused':state.sheltered?'In burrow':state.resting?'Resting':'Exploring';
  const descriptions=['Eat wild clover','Drink from the pond','Find your burrow','Survive a full day'];$('goals').innerHTML=descriptions.map((t,i)=>`<div class="goal ${state.goals[i]?'done':''}">${state.goals[i]?'✓':'○'} &nbsp; ${t}</div>`).join('');const next=state.goals.findIndex(g=>!g);$('objective').textContent=next<0?'You belong here. Keep exploring.':['Clover grows in pale green patches. Look just northwest of where you began.','The pond lies to the northeast. Approach the shore and press E.','Find the earth mound west of the clearing. Enter with E.','Keep your needs met until a whole day passes.'][next];
- const n=nearby(),danger=fox.position.distanceTo(player.position)<10&&!state.sheltered;$('prompt').textContent=paused?'Paused · press Ⅱ to resume':state.sheltered?'Safe in your burrow · E to leave':danger?'A fox is close! Sprint to your burrow.':state.resting?'Resting · R to wake':n?n.type==='food'?'E · Eat clover':n.type==='water'?'E · Drink from the pond':'E · Enter your burrow':'WASD to roam · Shift to sprint · E to interact';
+ const n=nearby(),danger=fox.position.distanceTo(player.position)<10&&!state.sheltered;$('prompt').textContent=paused?'Paused · press ▶ to resume':state.sheltered?'Safe in your burrow · E to leave':danger?'A fox is close! Sprint to your burrow.':state.resting?'Resting · R to wake':n?n.type==='food'?'E · Eat clover':n.type==='water'?'E · Drink from the pond':'E · Enter your burrow':'WASD to roam · Move mouse to look · M for map';
  $('interact').disabled=!n||paused;$('rest').textContent=state.resting?'Wake up':'Rest';
 }
 function finish(){keys.clear();paused=true;$('keepPlaying').hidden=true;$('endingTitle').textContent='A life in the clearing.';$('endingText').textContent='Your rabbit’s journey ended. Try keeping food, water, and energy replenished, and use the burrow to escape the fox.';$('ending').showModal();try{localStorage.removeItem(SAVE_KEY);}catch{}}
 let hudTimer=0;
 function frame(now){requestAnimationFrame(frame);const dt=last?Math.min((now-last)/1000,.05):0;last=now;
- const active=started&&!paused&&!document.hidden&&!$('guide').open&&!$('ending').open;
- if(active){const sim=dt*speed;let dx=Number(keys.has('d')||keys.has('arrowright'))-Number(keys.has('a')||keys.has('arrowleft')),dz=Number(keys.has('s')||keys.has('arrowdown'))-Number(keys.has('w')||keys.has('arrowup'));const moving=Boolean(dx||dz),sprinting=keys.has('shift')&&state.energy>5;
- if(moving&&!state.sheltered){state.resting=false;const len=Math.hypot(dx,dz),v=(sprinting?7:3.8)*sim;dx/=len;dz/=len;const nx=clamp(state.x+dx*v,-46,46),nz=clamp(state.z+dz*v,-46,46);const inWater=Math.hypot((nx-10)/1.4,nz+5)<4.45;const inTree=trees.some(t=>Math.hypot(nx-t.x,nz-t.z)<t.r);if(!inWater&&!inTree){state.x=nx;state.z=nz;}player.rotation.y=Math.atan2(-dx,-dz);hop+=sim*(sprinting?18:12);}
+ const active=started&&!blocked();
+ if(active){const sim=dt*speed;const horizontal=Number(keys.has('d')||keys.has('arrowright'))-Number(keys.has('a')||keys.has('arrowleft')),forward=Number(keys.has('w')||keys.has('arrowup'))-Number(keys.has('s')||keys.has('arrowdown'));const input=Boolean(horizontal||forward),sprinting=keys.has('shift')&&state.energy>5;
+ const direction=cameraDirection(horizontal,forward,yaw),pace=sprinting?7:3.8,smoothing=1-Math.exp(-dt*14);
+ if(state.sheltered||state.resting&&!input)velocity={x:0,z:0};else{velocity.x+=(direction.x*pace-velocity.x)*smoothing;velocity.z+=(direction.z*pace-velocity.z)*smoothing;}
+ const before={x:state.x,z:state.z};
+ if(input&&!state.sheltered)state.resting=false;
+ if(!state.sheltered){const next=walk(state.x,state.z,velocity.x*sim,velocity.z*sim,trees);state.x=next.x;state.z=next.z;}
+ const moving=Math.hypot(state.x-before.x,state.z-before.z)>.0001;
+ if(moving){player.rotation.y=turnToward(player.rotation.y,Math.atan2(-velocity.x,-velocity.z),1-Math.exp(-dt*14));hop+=sim*(sprinting?18:12);}
  tick(state,sim,moving,sprinting&&moving);player.position.set(state.x,moving&&!state.sheltered?Math.abs(Math.sin(hop))*.21:0,state.z);player.visible=!state.sheltered;
+ player.rotation.x=moving?Math.sin(hop)*.06:state.resting?-.12:Math.sin(now*.0015)*.015;
+ player.userData.ears.forEach((ear,i)=>ear.rotation.x=moving?-.15+Math.sin(hop+i)*.08:Math.sin(now*.001+i)*.05);
  const dist=Math.hypot(fox.position.x-state.x,fox.position.z-state.z);const hunt=dist<14&&!state.sheltered&&state.elapsed>35;const target=hunt?new THREE.Vector3(state.x,0,state.z):new THREE.Vector3(20+Math.sin(state.elapsed*.025)*8,0,-13+Math.cos(state.elapsed*.025)*9);const dir=target.sub(fox.position);if(dir.length()>.3){dir.normalize();fox.position.addScaledVector(dir,sim*(hunt?3.4:1.4));fox.rotation.y=Math.atan2(-dir.x,-dir.z);}if(dist<1.4&&hunt)state.health=clamp(state.health-sim*22);
  for(const p of patches){p.remaining=Math.min(100,p.remaining+sim*.12);p.group.scale.setScalar(.5+p.remaining/200);}
  saveTimer+=dt;if(saveTimer>5){saveTimer=0;save();}if(state.health<=0)finish();
@@ -98,9 +159,16 @@ function frame(now){requestAnimationFrame(frame);const dt=last?Math.min((now-las
  }
  const t=now/1000;butterflies.forEach((b,i)=>{b.position.set(Math.sin(t*.23+i*3)*12,1.4+Math.sin(t+i)*.5,Math.cos(t*.17+i*2)*12);b.rotation.y=t+i;b.children.forEach((w,j)=>w.rotation.z=Math.sin(t*12)*.6*(j?1:-1));});
  water.material.color.setHSL(.46+Math.sin(t*.3)*.005,.23,.48);
- const desired=started?new THREE.Vector3(state.x+zoom*.52,zoom*.82,state.z+zoom):new THREE.Vector3(19,20,30);camera.position.lerp(desired,Math.min(1,dt*4));camera.lookAt(started?new THREE.Vector3(state.x,.6,state.z):new THREE.Vector3(0,0,-1));
+ const distance=zoom*1.27,horizontalDistance=Math.cos(pitch)*distance;
+ const desired=started?new THREE.Vector3(state.x+Math.sin(yaw)*horizontalDistance,Math.sin(pitch)*distance,state.z+Math.cos(yaw)*horizontalDistance):new THREE.Vector3(19,20,30);camera.position.lerp(desired,1-Math.exp(-dt*6));camera.lookAt(started?new THREE.Vector3(state.x,.6,state.z):new THREE.Vector3(0,0,-1));
+ // Hide foreground canopies when they cover the animal instead of losing sight of it.
+ const view=new THREE.Vector3().subVectors(camera.position,player.position);const viewLength=view.length();view.normalize();
+ for(const tree of trees){const relative=tree.group.position.clone().add(new THREE.Vector3(0,5,0)).sub(player.position);const along=relative.dot(view);tree.group.visible=!started||!(along>1&&along<viewLength&&relative.addScaledVector(view,-along).length()<3.5);}
+ camera.updateMatrixWorld();
+ if(started)for(const point of landmarks){const projected=new THREE.Vector3(point.x,point.y,point.z).project(camera);const visible=projected.z<1&&projected.z>-1&&Math.abs(projected.x)<.9&&Math.abs(projected.y)<.8&&Math.hypot(point.x-state.x,point.z-state.z)<28;point.el.hidden=!visible;if(visible){point.el.style.left=`${(projected.x*.5+.5)*100}%`;point.el.style.top=`${(-projected.y*.5+.5)*100}%`;}}
  const daylight=started?.65+.35*Math.sin((state.minutes%1440)/1440*Math.PI*2-Math.PI/2):1;sun.intensity=1.4+daylight*1.8;
  hudTimer+=dt;if(hudTimer>.15){hudTimer=0;if(started)updateHud();}renderer.render(scene,camera);
 }
-function resize(){renderer.setSize(innerWidth,innerHeight);camera.aspect=innerWidth/innerHeight;camera.updateProjectionMatrix();}window.addEventListener('resize',resize);resize();camera.position.set(19,20,30);player.position.set(0,0,8);$('loading').hidden=true;requestAnimationFrame(frame);
+function resize(){renderer.setSize(innerWidth,innerHeight);camera.aspect=innerWidth/innerHeight;camera.updateProjectionMatrix();}window.addEventListener('resize',resize);resize();try{setQuality(localStorage.getItem('animallife-graphics'));}catch{}camera.position.set(19,20,30);player.position.set(0,0,8);$('loading').hidden=true;requestAnimationFrame(frame);
+
 

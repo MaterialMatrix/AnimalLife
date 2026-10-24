@@ -12,13 +12,23 @@ This project is a static website. In the public repository, open **Settings → 
 
 ## Controls
 
-- WASD or arrows: move; Shift: sprint
+- WASD or arrows: move relative to the camera; Shift: sprint
 - E: eat, drink, or enter/leave the burrow
 - R: rest/wake; Escape: pause
-- Mouse wheel: zoom; on-screen arrows on small screens
+- Move the mouse over the scenery: look left/right and up/down, without clicking
+- Mouse wheel: zoom; C: reset camera
+- Touch: drag the scenery to look, pinch to zoom
+- M or Map: north-up map with rabbit, clover, pond, burrow, and fox
+- Field guide: low-graphics mode and a prefilled feedback link to GitHub Issues
 - Time controls: 0.5×, 1×, 4×
 
 Progress autosaves locally every five seconds and on interactions. Starting a new life replaces the local save. No accounts, server, telemetry, or multiplayer. Time and aging are accelerated prototype mechanics; eight real minutes at 1× advance a full simulated day. Reloading regenerates world resources and resets fox position.
+
+Life pauses while a dialog is open or the browser loses focus. Graphics preference is stored locally. Low graphics disables shadows and reduces pixel density; it does not change game rules.
+
+## Version 0.2
+
+Camera-relative movement, smooth acceleration and turning, obstacle sliding with collision substeps, animated ears, mouse-movement camera controls (no click needed), touch drag and pinch, foreground tree hiding, floating landmark labels, a north-up clearing map, low-graphics mode, and a feedback link. Existing version 0.1 saves remain compatible. Added regression tests for camera-relative vectors, diagonal movement, collision tunneling, boundaries, and angle wrapping.
 
 ## Field testing
 
